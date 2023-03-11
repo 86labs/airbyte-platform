@@ -26,6 +26,7 @@ import io.airbyte.commons.temporal.TemporalUtils;
 import io.airbyte.commons.version.Version;
 import io.airbyte.config.Configs;
 import io.airbyte.config.ReplicationOutput;
+import io.airbyte.config.ResourceRequirements;
 import io.airbyte.config.StandardSyncInput;
 import io.airbyte.featureflag.FeatureFlagClient;
 import io.airbyte.featureflag.FieldSelectionEnabled;
@@ -35,6 +36,7 @@ import io.airbyte.featureflag.Workspace;
 import io.airbyte.metrics.lib.ApmTraceUtils;
 import io.airbyte.metrics.lib.MetricClientFactory;
 import io.airbyte.metrics.lib.MetricEmittingApps;
+import io.airbyte.persistence.job.ResourceRequirementsUtils;
 import io.airbyte.persistence.job.models.IntegrationLauncherConfig;
 import io.airbyte.persistence.job.models.JobRunConfig;
 import io.airbyte.protocol.models.ConfiguredAirbyteCatalog;
@@ -143,12 +145,23 @@ public class ReplicationJobOrchestrator implements JobOrchestrator<StandardSyncI
     // jobs into isolated pool to run.
     final boolean useIsolatedPool = sourceLauncherConfig.getIsCustomConnector() || destinationLauncherConfig.getIsCustomConnector();
     log.info("Setting up source launcher...");
+
+    final ResourceRequirements defaultResourceRequirements = new ResourceRequirements();
+    defaultResourceRequirements.setCpuLimit(configs.getJobMainContainerCpuLimit());
+    defaultResourceRequirements.setCpuRequest(configs.getJobMainContainerCpuRequest());
+    defaultResourceRequirements.setMemoryLimit(configs.getJobMainContainerMemoryRequest());
+    defaultResourceRequirements.setMemoryRequest(configs.getJobMainContainerMemoryRequest());
+    final ResourceRequirements sourceRequirements =
+        ResourceRequirementsUtils.getResourceRequirements(syncInput.getSourceResourceRequirements(), defaultResourceRequirements);
+    final ResourceRequirements destinationRequirements =
+        ResourceRequirementsUtils.getResourceRequirements(syncInput.getDestinationResourceRequirements(), defaultResourceRequirements);
+
     final var sourceLauncher = new AirbyteIntegrationLauncher(
         sourceLauncherConfig.getJobId(),
         Math.toIntExact(sourceLauncherConfig.getAttemptId()),
         sourceLauncherConfig.getDockerImage(),
         processFactory,
-        syncInput.getSourceResourceRequirements(),
+        sourceRequirements,
         sourceLauncherConfig.getAllowedHosts(),
         useIsolatedPool,
         featureFlags);
@@ -159,7 +172,7 @@ public class ReplicationJobOrchestrator implements JobOrchestrator<StandardSyncI
         Math.toIntExact(destinationLauncherConfig.getAttemptId()),
         destinationLauncherConfig.getDockerImage(),
         processFactory,
-        syncInput.getDestinationResourceRequirements(),
+        destinationRequirements,
         destinationLauncherConfig.getAllowedHosts(),
         useIsolatedPool,
         featureFlags);
